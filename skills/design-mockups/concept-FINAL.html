@@ -619,6 +619,9 @@ textarea.input-field { min-height: 110px; resize: vertical; line-height: 1.7; }
   #sermonDraft { height:130px; font-size:13px; margin-top:8px; resize:vertical; }
 
 </style>
+  <!-- PDF.js & mammoth.js for file upload -->
+  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js"></script>
 </head>
 <body>
 
@@ -801,10 +804,10 @@ textarea.input-field { min-height: 110px; resize: vertical; line-height: 1.7; }
             <div class="input-group" id="fileUploadGroup" style="display:none;">
               <label class="input-label">📄 내 설교 초안 첨부<span class="mentor-badge">멘토링</span></label>
               <div class="file-drop-area" id="fileDropArea">
-                <input type="file" id="fileInput" accept=".txt,.md,.text" onchange="handleFileUpload(this)">
+                <input type="file" id="fileInput" accept=".txt,.md,.text,.pdf,.docx,.doc" onchange="handleFileUpload(this)">
                 <span class="file-drop-icon">📁</span>
-                <p class="file-drop-text">클릭하여 파일 선택 (.txt .md)</p>
-                <p class="file-drop-hint">또는 아래 텍스트 박스에 직접 붙여넣기</p>
+                <p class="file-drop-text">클릭하여 파일 선택</p>
+                <p class="file-drop-hint">.txt .md .pdf .docx 지원 &nbsp;|&nbsp; 또는 아래에 직접 붙여넣기</p>
               </div>
               <div id="fileNameBar" style="display:none;">
                 <span id="fileNameText"></span>
@@ -1546,16 +1549,74 @@ function updateSidebarApiStatus(ok) {
   function handleFileUpload(input) {
     var file = input.files[0];
     if (!file) return;
-    var reader = new FileReader();
-    reader.onload = function(e) {
-      var sd = document.getElementById('sermonDraft');
-      if (sd) sd.value = e.target.result;
-      var fb = document.getElementById('fileNameBar');
-      var fn = document.getElementById('fileNameText');
-      if (fb && fn) { fn.textContent = '📄 ' + file.name; fb.style.display = 'flex'; }
-    };
-    reader.onerror = function() { alert('파일을 읽을 수 없습니다. .txt 또는 .md 파일을 사용해 주세요.'); };
-    reader.readAsText(file, 'utf-8');
+    var sd  = document.getElementById('sermonDraft');
+    var fb  = document.getElementById('fileNameBar');
+    var fn  = document.getElementById('fileNameText');
+    var ext = file.name.split('.').pop().toLowerCase();
+
+    function setName(label) {
+      if (fn) fn.textContent = '📄 ' + label;
+      if (fb) fb.style.display = 'flex';
+    }
+    function setContent(text) { if (sd) sd.value = text; }
+
+    if (ext === 'txt' || ext === 'md' || ext === 'text') {
+      var r = new FileReader();
+      r.onload  = function(e) { setContent(e.target.result); setName(file.name); };
+      r.onerror = function()  { alert('텍스트 파일을 읽을 수 없습니다.'); };
+      r.readAsText(file, 'utf-8');
+
+    } else if (ext === 'pdf') {
+      if (typeof pdfjsLib === 'undefined') {
+        alert('PDF 라이브러리를 불러오는 중입니다.\n인터넷 연결을 확인하고 잠시 후 다시 시도해 주세요.');
+        return;
+      }
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+      setName(file.name + ' (읽는 중…)');
+      var r = new FileReader();
+      r.onload = function(e) {
+        var data = new Uint8Array(e.target.result);
+        pdfjsLib.getDocument({data: data}).promise.then(function(pdf) {
+          var pages = [];
+          for (var i = 1; i <= pdf.numPages; i++) pages.push(i);
+          return Promise.all(pages.map(function(n) {
+            return pdf.getPage(n).then(function(page) {
+              return page.getTextContent().then(function(tc) {
+                return tc.items.map(function(it) { return it.str; }).join(' ');
+              });
+            });
+          }));
+        }).then(function(texts) {
+          setContent(texts.join('\n\n'));
+          setName(file.name);
+        }).catch(function(err) {
+          alert('PDF 읽기 오류: ' + (err.message || err));
+        });
+      };
+      r.readAsArrayBuffer(file);
+
+    } else if (ext === 'docx' || ext === 'doc') {
+      if (typeof mammoth === 'undefined') {
+        alert('Word 문서 라이브러리를 불러오는 중입니다.\n인터넷 연결을 확인하고 잠시 후 다시 시도해 주세요.');
+        return;
+      }
+      setName(file.name + ' (읽는 중…)');
+      var r = new FileReader();
+      r.onload = function(e) {
+        mammoth.extractRawValue({arrayBuffer: e.target.result}).then(function(result) {
+          setContent(result.value);
+          setName(file.name);
+          if (result.messages && result.messages.length) console.warn('mammoth:', result.messages);
+        }).catch(function(err) {
+          alert('Word 문서 읽기 오류: ' + (err.message || err));
+        });
+      };
+      r.readAsArrayBuffer(file);
+
+    } else {
+      alert('지원하지 않는 파일 형식입니다.\n.txt .md .pdf .docx 파일을 사용해 주세요.');
+    }
   }
 
   function clearFile() {
