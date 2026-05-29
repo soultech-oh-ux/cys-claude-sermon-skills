@@ -632,6 +632,24 @@ textarea.input-field { min-height: 110px; resize: vertical; line-height: 1.7; }
 .export-btn:hover { border-color:var(--gold-400); color:var(--gold-400); background:rgba(240,192,64,0.05); }
 .export-btn.primary { background:var(--gold-400); color:var(--bg-deepest); border-color:var(--gold-400); }
 .export-btn.primary:hover { background:var(--gold-300); }
+
+  /* ── Topic Memory & File Upload ── */
+  .input-label-row { display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; }
+  .input-label-row .input-label { margin-bottom:0; }
+  .btn-new-topic { background:none; border:1px solid var(--border-light); border-radius:6px; color:var(--text-muted); font-size:12px; padding:3px 10px; cursor:pointer; transition:all .18s; }
+  .btn-new-topic:hover { border-color:var(--gold-400); color:var(--gold-400); }
+  .file-drop-area { border:1.5px dashed var(--border-light); border-radius:10px; padding:18px; text-align:center; cursor:pointer; transition:border-color .18s; position:relative; }
+  .file-drop-area:hover { border-color:var(--gold-400); }
+  .file-drop-area input[type=file] { position:absolute; inset:0; opacity:0; cursor:pointer; width:100%; height:100%; }
+  .file-drop-icon { font-size:26px; display:block; margin-bottom:4px; }
+  .file-drop-text { color:var(--text-secondary); font-size:13px; margin:3px 0; }
+  .file-drop-hint { color:var(--text-muted); font-size:11px; margin:2px 0; }
+  #fileNameBar { display:flex; align-items:center; gap:8px; background:var(--bg-surface); border-radius:6px; padding:6px 12px; font-size:13px; color:var(--gold-300); margin-top:8px; }
+  #fileNameBar button { background:none; border:none; color:var(--text-muted); cursor:pointer; font-size:14px; padding:0 4px; line-height:1; }
+  #fileNameBar button:hover { color:var(--text-primary); }
+  .mentor-badge { background:var(--cat-theology,#50D0A0); color:#0a0a18; font-size:10px; padding:2px 7px; border-radius:10px; margin-left:6px; font-weight:700; letter-spacing:.3px; }
+  #sermonDraft { height:130px; font-size:13px; margin-top:8px; resize:vertical; }
+
 </style>
 </head>
 <body>
@@ -821,12 +839,30 @@ textarea.input-field { min-height: 110px; resize: vertical; line-height: 1.7; }
           </div>
           <div class="skill-exec-body">
             <div class="input-group">
-              <label class="input-label">성경 본문 입력</label>
+              <div class="input-label-row">
+                <label class="input-label">성경 본문 / 설교 주제</label>
+                <button class="btn-new-topic" onclick="clearTopic()" title="새 주제로 시작">↺ 새 주제로</button>
+              </div>
               <input class="input-field" id="inputVerse" type="text" placeholder="예: 로마서 8:28, 빌립보서 4:4-7">
             </div>
             <div class="input-group">
               <label class="input-label">추가 요청 (선택)</label>
               <textarea class="input-field" id="inputExtra" placeholder="특별히 분석하고 싶은 부분이나 질문을 입력하세요"></textarea>
+            </div>
+            <!-- 신학자 멘토링: 설교 초안 업로드 -->
+            <div class="input-group" id="fileUploadGroup" style="display:none;">
+              <label class="input-label">📄 내 설교 초안 첨부<span class="mentor-badge">멘토링</span></label>
+              <div class="file-drop-area" id="fileDropArea">
+                <input type="file" id="fileInput" accept=".txt,.md,.text" onchange="handleFileUpload(this)">
+                <span class="file-drop-icon">📁</span>
+                <p class="file-drop-text">클릭하여 파일 선택 (.txt .md)</p>
+                <p class="file-drop-hint">또는 아래 텍스트 박스에 직접 붙여넣기</p>
+              </div>
+              <div id="fileNameBar" style="display:none;">
+                <span id="fileNameText"></span>
+                <button onclick="clearFile()" title="파일 제거">✕</button>
+              </div>
+              <textarea class="input-field" id="sermonDraft" placeholder="설교 초안을 여기에 붙여넣거나 위에서 파일을 업로드하세요…"></textarea>
             </div>
             <div class="exec-actions">
               <button class="btn-exec" id="btnRun" onclick="runSkill()">분석 시작 →</button>
@@ -1031,8 +1067,13 @@ function showPage(page) {
     document.getElementById('view-api').style.display = 'none';
     window.scrollTo(0,0);
     document.getElementById('skillResult').classList.remove('show');
-    document.getElementById('inputVerse').value = '';
-    document.getElementById('inputExtra').value = '';
+    document.getElementById('exportBar') && (document.getElementById('exportBar').style.display = 'none');
+    // Restore previously set topic (session memory)
+    document.getElementById('inputVerse').value = sessionStorage.getItem('sermon_verse') || '';
+    document.getElementById('inputExtra').value = sessionStorage.getItem('sermon_extra') || '';
+    // Reset sermon draft on skill switch
+    var sd = document.getElementById('sermonDraft'); if (sd) sd.value = '';
+    var fb = document.getElementById('fileNameBar'); if (fb) fb.style.display = 'none';
     if (currentSkill) {
       document.getElementById('execSkillTitle').textContent = currentSkill.name;
       document.getElementById('execSkillDesc').textContent = currentSkill.desc;
@@ -1044,6 +1085,10 @@ function showPage(page) {
       clearActiveSkill();
       const item = document.querySelector(`.skill-item[data-skill-id="${currentSkill.id}"]`);
       if (item) item.classList.add('active-skill');
+      // Show file upload panel for theology coaching skills
+      var THEOLOGY_IDS = ['augustine','luther','calvin-inst','calvin-style','bavinck','lloyd-jones','wesley'];
+      var fg = document.getElementById('fileUploadGroup');
+      if (fg) fg.style.display = THEOLOGY_IDS.indexOf(currentSkill.id) > -1 ? 'block' : 'none';
     }
   }
 }
@@ -1152,7 +1197,13 @@ async function runSkill() {
   document.getElementById('apiStatus').textContent = 'Streaming...';
   document.getElementById('apiStatus').className = 'api-status connected';
 
-  const userMsg = verse + (extra ? '\n\n\ucd94\uac00 \uc694\uccad: ' + extra : '');
+  // Save verse/extra to session memory
+  sessionStorage.setItem('sermon_verse', verse);
+  sessionStorage.setItem('sermon_extra', extra);
+  var draft = (document.getElementById('sermonDraft') || {}).value || '';
+  var userMsg = verse;
+  if (extra) userMsg += '\n\n추가 요청: ' + extra;
+  if (draft.trim()) userMsg += '\n\n[내 설교 초안]\n' + draft.trim();
   const system  = '\ub2f9\uc2e0\uc740 \ud55c\uad6d \ubaa9\ud68c\uc790\ub97c \uc704\ud55c \uc124\uad50 \uc900\ube44 \uc804\ubb38\uac00\uc785\ub2c8\ub2e4. \uc9c0\uae08 \ub2f4\ub2f9\ud558\ub294 \uc5ed\ud560: [' + currentSkill.name + ']\n' +
     currentSkill.desc + '\n\n\uc131\uacbd \ubcf8\ubb38\uc744 \uc785\ub825\ubc1b\uc544 \uc6d0\uc5b4(\ud5ec\ub77c\uc5b4/\ud788\ube0c\ub9ac\uc5b4) \ubd84\uc11d, \uc2e0\ud559\uc801 \ud574\uc11d, \uc124\uad50 \uc801\uc6a9\uae4c\uc9c0 \uae4a\uc774 \uc788\uac8c \uc548\ub0b4\ud574 \uc8fc\uc138\uc694. \ud55c\uad6d\uc5b4\ub85c \ub2f5\ubcc0\ud558\uc138\uc694.';
 
@@ -1622,6 +1673,40 @@ function updateSidebarApiStatus(ok) {
         if (btn) { var orig=btn.textContent; btn.textContent='✓ 복사됨'; setTimeout(function(){btn.textContent=orig;},1500); }
       });
     }
+  }
+
+
+  /* ── Topic Memory ── */
+  function clearTopic() {
+    sessionStorage.removeItem('sermon_verse');
+    sessionStorage.removeItem('sermon_extra');
+    document.getElementById('inputVerse').value = '';
+    document.getElementById('inputExtra').value = '';
+    var sd = document.getElementById('sermonDraft'); if (sd) sd.value = '';
+    var fb = document.getElementById('fileNameBar'); if (fb) fb.style.display = 'none';
+    var fi = document.getElementById('fileInput'); if (fi) fi.value = '';
+  }
+
+  /* ── File Upload ── */
+  function handleFileUpload(input) {
+    var file = input.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      var sd = document.getElementById('sermonDraft');
+      if (sd) sd.value = e.target.result;
+      var fb = document.getElementById('fileNameBar');
+      var fn = document.getElementById('fileNameText');
+      if (fb && fn) { fn.textContent = '📄 ' + file.name; fb.style.display = 'flex'; }
+    };
+    reader.onerror = function() { alert('파일을 읽을 수 없습니다. .txt 또는 .md 파일을 사용해 주세요.'); };
+    reader.readAsText(file, 'utf-8');
+  }
+
+  function clearFile() {
+    var fi = document.getElementById('fileInput'); if (fi) fi.value = '';
+    var sd = document.getElementById('sermonDraft'); if (sd) sd.value = '';
+    var fb = document.getElementById('fileNameBar'); if (fb) fb.style.display = 'none';
   }
 
 </script>
