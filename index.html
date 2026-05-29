@@ -1087,71 +1087,164 @@ function execSkill(id, name, desc) {
   if(si){var ac=si.closest('.accordion');if(ac){var t=ac.querySelector('.accordion-trigger'),c=ac.querySelector('.accordion-content');if(t&&!t.classList.contains('open')){t.classList.add('open');c.classList.add('open');}}}
 }
 
-// ═══════ RUN SKILL (streaming) ═══════
-let currentAbort = null;
-
-function runSkill() {
+// ═══════ RUN SKILL (direct API streaming) ═══════
+async function runSkill() {
   const verse = document.getElementById('inputVerse').value.trim();
   if (!verse) { document.getElementById('inputVerse').focus(); return; }
-  const apiKey = document.getElementById('apiKeyInput').value.trim();
-  const model = document.getElementById('modelSelect').value;
+
+  const apiKey  = localStorage.getItem('sermon_api_key') || document.getElementById('apiKeyInput').value.trim();
+  const provider = localStorage.getItem('sermon_provider') || document.getElementById('providerSelect').value || 'anthropic';
+  const model   = localStorage.getItem('sermon_model') || document.getElementById('modelSelect').value;
+  const extra   = document.getElementById('inputExtra').value.trim();
   const folderName = SKILL_FOLDER_MAP[currentSkill.id] || currentSkill.id;
-  if (!apiKey) { showDemoResult(verse, folderName); return; }
-  localStorage.setItem('sermon_api_key', apiKey);
-  localStorage.setItem('sermon_model', model);
-  const btn = document.getElementById('btnRun');
-  btn.disabled = true;
-  btn.innerHTML = '<span class="loading-dots"><span></span><span></span><span></span></span> \uBD84\uC11D \uC911...';
-  const resultDiv = document.getElementById('skillResult');
+
+  const resultDiv  = document.getElementById('skillResult');
   const resultBody = document.getElementById('resultBody');
-  const extra = document.getElementById('inputExtra').value.trim();
+  const btn        = document.getElementById('btnRun');
+
   document.getElementById('resultTitle').textContent = currentSkill.name + ' \u2014 ' + verse;
   resultBody.textContent = '';
   resultDiv.classList.add('show');
   resultDiv.scrollIntoView({behavior:'smooth'});
+
+  if (!apiKey) { showDemoResult(verse, folderName); return; }
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="loading-dots"><span></span><span></span><span></span></span> \ubd84\uc11d \uc911...';
   document.getElementById('apiStatus').textContent = 'Streaming...';
   document.getElementById('apiStatus').className = 'api-status connected';
-  if (currentAbort) currentAbort.abort();
-  currentAbort = new AbortController();
-  fetch('/api/chat', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({apiKey, skillFolder: folderName, verse, extra, model, provider: document.getElementById("providerSelect").value}),
-    signal: currentAbort.signal
-  }).then(function(resp) {
-    if (!resp.ok) return resp.json().then(function(e){throw new Error(e.error||'API Error '+resp.status);});
-    const reader = resp.body.getReader();
-    const dec = new TextDecoder();
-    let buf = '';
-    function pump() {
-      return reader.read().then(function(r) {
-        if (r.done) {
-          btn.disabled = false; btn.textContent = '\uBD84\uC11D \uC2DC\uC791 \u2192';
-          document.getElementById('apiStatus').textContent = 'Connected';
-          currentAbort = null; return;
-        }
-        buf += dec.decode(r.value, {stream:true});
-        const ll = buf.split('\n'); buf = ll.pop()||'';
-        for (let i=0;i<ll.length;i++) {
-          const ln = ll[i].trim();
-          if (!ln.startsWith('data: ')) continue;
-          const d = ln.slice(6);
-          if (d==='[DONE]') continue;
-          try { const p=JSON.parse(d); if(p.text) resultBody.textContent+=p.text; if(p.error) resultBody.textContent+='\n\n\u274C '+p.error; } catch(e){}
-        }
-        resultDiv.scrollIntoView({behavior:'smooth',block:'end'});
-        return pump();
-      });
+
+  const userMsg = verse + (extra ? '\n\n\ucd94\uac00 \uc694\uccad: ' + extra : '');
+  const system  = '\ub2f9\uc2e0\uc740 \ud55c\uad6d \ubaa9\ud68c\uc790\ub97c \uc704\ud55c \uc124\uad50 \uc900\ube44 \uc804\ubb38\uac00\uc785\ub2c8\ub2e4. \uc9c0\uae08 \ub2f4\ub2f9\ud558\ub294 \uc5ed\ud560: [' + currentSkill.name + ']\n' +
+    currentSkill.desc + '\n\n\uc131\uacbd \ubcf8\ubb38\uc744 \uc785\ub825\ubc1b\uc544 \uc6d0\uc5b4(\ud5ec\ub77c\uc5b4/\ud788\ube0c\ub9ac\uc5b4) \ubd84\uc11d, \uc2e0\ud559\uc801 \ud574\uc11d, \uc124\uad50 \uc801\uc6a9\uae4c\uc9c0 \uae4a\uc774 \uc788\uac8c \uc548\ub0b4\ud574 \uc8fc\uc138\uc694. \ud55c\uad6d\uc5b4\ub85c \ub2f5\ubcc0\ud558\uc138\uc694.';
+
+  try {
+    if (provider === 'anthropic') {
+      await streamAnthropic(apiKey, model, system, userMsg, resultBody);
+    } else if (provider === 'openai') {
+      await streamOpenAI(apiKey, model, system, userMsg, resultBody);
+    } else if (provider === 'gemini') {
+      await streamGemini(apiKey, model, system, userMsg, resultBody);
     }
-    return pump();
-  }).catch(function(err) {
-    if (err.name==='AbortError') return;
-    resultBody.textContent += '\n\n\u274C ' + err.message;
-    btn.disabled = false; btn.textContent = '\uBD84\uC11D \uC2DC\uC791 \u2192';
+    document.getElementById('apiStatus').textContent = 'Connected';
+    document.getElementById('apiStatus').className = 'api-status connected';
+  } catch(e) {
+    resultBody.textContent += '\n\n\u274c \uc624\ub958: ' + e.message;
     document.getElementById('apiStatus').textContent = 'Error';
     document.getElementById('apiStatus').className = 'api-status disconnected';
-    currentAbort = null;
+  }
+
+  btn.disabled = false;
+  btn.textContent = '\ubd84\uc11d \uc2dc\uc791 \u2192';
+}
+
+async function streamAnthropic(apiKey, model, system, userMsg, container) {
+  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true'
+    },
+    body: JSON.stringify({
+      model: model, max_tokens: 4096, stream: true,
+      system: system,
+      messages: [{role: 'user', content: userMsg}]
+    })
   });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({error:{message:resp.statusText}}));
+    throw new Error(err.error?.message || resp.statusText);
+  }
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (true) {
+    const {done, value} = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, {stream: true});
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      try {
+        const json = JSON.parse(line.slice(6).trim());
+        if (json.type === 'content_block_delta' && json.delta?.text) {
+          container.textContent += json.delta.text;
+          container.scrollIntoView({behavior:'smooth', block:'end'});
+        }
+      } catch(e) {}
+    }
+  }
+}
+
+async function streamOpenAI(apiKey, model, system, userMsg, container) {
+  const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey},
+    body: JSON.stringify({
+      model: model, stream: true,
+      messages: [{role:'system', content:system}, {role:'user', content:userMsg}]
+    })
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({error:{message:resp.statusText}}));
+    throw new Error(err.error?.message || resp.statusText);
+  }
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (true) {
+    const {done, value} = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, {stream: true});
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      const data = line.slice(6).trim();
+      if (data === '[DONE]') return;
+      try {
+        const text = JSON.parse(data).choices?.[0]?.delta?.content;
+        if (text) { container.textContent += text; container.scrollIntoView({behavior:'smooth', block:'end'}); }
+      } catch(e) {}
+    }
+  }
+}
+
+async function streamGemini(apiKey, model, system, userMsg, container) {
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':streamGenerateContent?key=' + apiKey + '&alt=sse';
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      system_instruction: {parts: [{text: system}]},
+      contents: [{role: 'user', parts: [{text: userMsg}]}],
+      generationConfig: {maxOutputTokens: 4096}
+    })
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({error:{message:resp.statusText}}));
+    throw new Error(err.error?.message || resp.statusText);
+  }
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (true) {
+    const {done, value} = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, {stream: true});
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      try {
+        const text = JSON.parse(line.slice(6).trim()).candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text) { container.textContent += text; container.scrollIntoView({behavior:'smooth', block:'end'}); }
+      } catch(e) {}
+    }
+  }
 }
 
 function showDemoResult(verse, folderName) {
