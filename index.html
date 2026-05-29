@@ -602,7 +602,38 @@ textarea.input-field { min-height: 110px; resize: vertical; line-height: 1.7; }
 }
 .sidebar-api-btn:hover { border-color:var(--gold-400); color:var(--gold-400); background:rgba(240,192,64,0.05); }
 .sidebar-api-btn.has-key { border-color:rgba(80,208,160,0.35); color:#50D0A0; }
+
+/* ════ RESULT RENDER & EXPORT ════ */
+.result-body h1,.result-body h2,.result-body h3 { color:var(--text-primary); margin:18px 0 8px; line-height:1.4; }
+.result-body h1 { font-size:20px; border-bottom:1px solid var(--border-subtle); padding-bottom:6px; }
+.result-body h2 { font-size:17px; }
+.result-body h3 { font-size:15px; color:var(--gold-400); }
+.result-body p  { margin:8px 0; color:var(--text-secondary); }
+.result-body ul,.result-body ol { margin:8px 0 8px 20px; color:var(--text-secondary); }
+.result-body li { margin:4px 0; }
+.result-body strong { color:var(--text-primary); font-weight:700; }
+.result-body em { color:var(--text-tertiary); font-style:italic; }
+.result-body code { background:var(--bg-surface); padding:2px 6px; border-radius:4px; font-family:'Noto Sans Mono',monospace; font-size:13px; color:var(--gold-300); }
+.result-body pre { background:var(--bg-surface); padding:14px; border-radius:8px; overflow-x:auto; margin:12px 0; }
+.result-body pre code { background:none; padding:0; }
+.result-body table { width:100%; border-collapse:collapse; margin:14px 0; font-size:14px; }
+.result-body th { background:var(--bg-surface); color:var(--text-primary); font-weight:700; padding:9px 12px; border:1px solid var(--border-light); text-align:left; }
+.result-body td { padding:8px 12px; border:1px solid var(--border-subtle); color:var(--text-secondary); }
+.result-body tr:nth-child(even) td { background:rgba(255,255,255,0.02); }
+.result-body blockquote { border-left:3px solid var(--gold-400); padding:8px 16px; margin:12px 0; background:rgba(240,192,64,0.04); color:var(--text-tertiary); }
+.result-body hr { border:none; border-top:1px solid var(--border-subtle); margin:16px 0; }
+.export-bar { display:flex; gap:10px; margin-top:18px; padding-top:14px; border-top:1px solid var(--border-subtle); }
+.export-btn {
+  padding:8px 18px; border-radius:8px; border:1px solid var(--border-light);
+  background:var(--bg-elevated); color:var(--text-secondary);
+  font-size:13px; font-weight:600; cursor:pointer; transition:all .2s;
+  font-family:'Pretendard',sans-serif;
+}
+.export-btn:hover { border-color:var(--gold-400); color:var(--gold-400); background:rgba(240,192,64,0.05); }
+.export-btn.primary { background:var(--gold-400); color:var(--bg-deepest); border-color:var(--gold-400); }
+.export-btn.primary:hover { background:var(--gold-300); }
 </style>
+<script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
 </head>
 <body>
 
@@ -805,6 +836,10 @@ textarea.input-field { min-height: 110px; resize: vertical; line-height: 1.7; }
             <div class="skill-result" id="skillResult">
               <h4 id="resultTitle">분석 결과</h4>
               <div class="result-body" id="resultBody"></div>
+              <div class="export-bar" id="exportBar" style="display:none;">
+                <button class="export-btn primary" onclick="exportHtml()">💾 HTML로 저장</button>
+                <button class="export-btn" onclick="copyText()">📋 텍스트 복사</button>
+              </div>
             </div>
           </div>
         </div>
@@ -1130,6 +1165,8 @@ async function runSkill() {
     } else if (provider === 'gemini') {
       await streamGemini(apiKey, model, system, userMsg, resultBody);
     }
+    if (typeof marked !== 'undefined') resultBody.innerHTML = marked.parse(resultBody.textContent || '');
+    var eb = document.getElementById('exportBar'); if(eb) eb.style.display='flex';
     document.getElementById('apiStatus').textContent = 'Connected';
     document.getElementById('apiStatus').className = 'api-status connected';
   } catch(e) {
@@ -1161,7 +1198,7 @@ async function streamAnthropic(apiKey, model, system, userMsg, container) {
       'anthropic-dangerous-direct-browser-access': 'true'
     },
     body: JSON.stringify({
-      model: model, max_tokens: 4096, stream: true,
+      model: model, max_tokens: 8192, stream: true,
       system: system,
       messages: [{role: 'user', content: userMsg}]
     })
@@ -1172,7 +1209,7 @@ async function streamAnthropic(apiKey, model, system, userMsg, container) {
   }
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
-  let buffer = '';
+  let buffer = '', fullText = '';
   while (true) {
     const {done, value} = await reader.read();
     if (done) break;
@@ -1184,12 +1221,14 @@ async function streamAnthropic(apiKey, model, system, userMsg, container) {
       try {
         const json = JSON.parse(line.slice(6).trim());
         if (json.type === 'content_block_delta' && json.delta?.text) {
-          container.textContent += json.delta.text;
+          fullText += json.delta.text;
+          container.textContent = fullText;
           container.scrollIntoView({behavior:'smooth', block:'end'});
         }
       } catch(e) {}
     }
   }
+  return fullText;
 }
 
 async function streamOpenAI(apiKey, model, system, userMsg, container) {
@@ -1207,7 +1246,7 @@ async function streamOpenAI(apiKey, model, system, userMsg, container) {
   }
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
-  let buffer = '';
+  let buffer = '', fullText = '';
   while (true) {
     const {done, value} = await reader.read();
     if (done) break;
@@ -1217,7 +1256,7 @@ async function streamOpenAI(apiKey, model, system, userMsg, container) {
     for (const line of lines) {
       if (!line.startsWith('data: ')) continue;
       const data = line.slice(6).trim();
-      if (data === '[DONE]') return;
+      if (data === '[DONE]') { return fullText; }
       try {
         const text = JSON.parse(data).choices?.[0]?.delta?.content;
         if (text) { container.textContent += text; container.scrollIntoView({behavior:'smooth', block:'end'}); }
