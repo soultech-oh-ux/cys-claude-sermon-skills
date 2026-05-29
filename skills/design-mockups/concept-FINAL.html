@@ -1028,7 +1028,8 @@ async function runSkill() {
   const apiKey  = localStorage.getItem('sermon_api_key_' + provider) ||
                   localStorage.getItem('sermon_api_key') || '';
   const model   = localStorage.getItem('sermon_model_' + provider) ||
-                  localStorage.getItem('sermon_model') || 'claude-sonnet-4-20250514';
+                  localStorage.getItem('sermon_model') ||
+                  (provider === 'gemini' ? 'gemini-2.5-flash' : provider === 'openai' ? 'gpt-4o' : 'claude-sonnet-4-20250514');
   const extra   = document.getElementById('inputExtra').value.trim();
 
   const resultDiv  = document.getElementById('skillResult');
@@ -1154,36 +1155,48 @@ async function streamOpenAI(apiKey, model, system, userMsg, container) {
 }
 
 async function streamGemini(apiKey, model, system, userMsg, container) {
-  const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':streamGenerateContent?key=' + apiKey + '&alt=sse';
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      system_instruction: {parts: [{text: system}]},
-      contents: [{role: 'user', parts: [{text: userMsg}]}],
-      generationConfig: {maxOutputTokens: 4096}
-    })
+  const body = JSON.stringify({
+    system_instruction: {parts: [{text: system}]},
+    contents: [{role: 'user', parts: [{text: userMsg}]}],
+    generationConfig: {maxOutputTokens: 4096}
   });
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({error:{message:resp.statusText}}));
-    throw new Error(err.error?.message || resp.statusText);
-  }
-  const reader = resp.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  while (true) {
-    const {done, value} = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, {stream: true});
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
-    for (const line of lines) {
-      if (!line.startsWith('data: ')) continue;
-      try {
-        const text = JSON.parse(line.slice(6).trim()).candidates?.[0]?.content?.parts?.[0]?.text;
-        if (text) { container.textContent += text; container.scrollIntoView({behavior:'smooth', block:'end'}); }
-      } catch(e) {}
+  /* SSE 스트리밍 시도 */
+  try {
+    const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':streamGenerateContent?key=' + apiKey + '&alt=sse';
+    const resp = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body});
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({error:{message:resp.statusText}}));
+      throw new Error(err.error?.message || resp.statusText);
     }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, {stream: true});
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        try {
+          const text = JSON.parse(line.slice(6).trim()).candidates?.[0]?.content?.parts?.[0]?.text;
+          if (text) { container.textContent += text; container.scrollIntoView({behavior:'smooth', block:'end'}); }
+        } catch(e) {}
+      }
+    }
+  } catch(sseErr) {
+    /* SSE 실패 시 비스트리밍 폴백 */
+    container.textContent = '';
+    const url2 = 'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + apiKey;
+    const resp2 = await fetch(url2, {method:'POST', headers:{'Content-Type':'application/json'}, body});
+    if (!resp2.ok) {
+      const err = await resp2.json().catch(() => ({error:{message:resp2.statusText}}));
+      throw new Error(err.error?.message || resp2.statusText);
+    }
+    const data = await resp2.json();
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    container.textContent = text;
   }
 }
 
@@ -1246,6 +1259,7 @@ var PROVIDER_MODELS = {
   openai: [
     {value:'gpt-4o',      label:'GPT-4o'},
     {value:'gpt-4o-mini', label:'GPT-4o mini'},
+    {value:'gpt-4-turbo', label:'GPT-4 Turbo'},
     {value:'gpt-4.1',     label:'GPT-4.1'},
     {value:'o3-mini',     label:'o3-mini'}
   ]
