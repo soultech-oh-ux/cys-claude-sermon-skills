@@ -1024,9 +1024,11 @@ async function runSkill() {
   const verse = document.getElementById('inputVerse').value.trim();
   if (!verse) { document.getElementById('inputVerse').focus(); return; }
 
-  const apiKey  = localStorage.getItem('sermon_api_key') || '';
   const provider = localStorage.getItem('sermon_provider') || 'anthropic';
-  const model   = localStorage.getItem('sermon_model') || 'claude-sonnet-4-20250514';
+  const apiKey  = localStorage.getItem('sermon_api_key_' + provider) ||
+                  localStorage.getItem('sermon_api_key') || '';
+  const model   = localStorage.getItem('sermon_model_' + provider) ||
+                  localStorage.getItem('sermon_model') || 'claude-sonnet-4-20250514';
   const extra   = document.getElementById('inputExtra').value.trim();
 
   const resultDiv  = document.getElementById('skillResult');
@@ -1061,7 +1063,16 @@ async function runSkill() {
       await streamGemini(apiKey, model, system, userMsg, resultBody);
     }
   } catch(e) {
-    resultBody.textContent += '\n\n\u274c \uc624\ub958: ' + e.message;
+    var msg = e.message || '';
+    var hint = '';
+    if (msg.includes('invalid x-api-key') || msg.includes('invalid_api_key')) {
+      hint = '\n\n개선 안내: API Key가 잘못되었습니다. 사이드바 하단 [API 설정]에서 제공사를 확인하고 키를 다시 저장해 주세요.';
+    } else if (msg.includes('401') || msg.includes('403') || msg.includes('Unauthorized')) {
+      hint = '\n\n개선 안내: 인증 실패입니다. API Key를 다시 확인해 주세요.';
+    } else if (msg.includes('CORS') || msg.includes('Failed to fetch')) {
+      hint = '\n\n개선 안내: 브라우저 CORS 제한입니다. 로컈 서버(로컈호스트)를 통해 실행하시거나 브라우저 확장을 사용해 주세요.';
+    }
+    resultBody.textContent += '\n\n❌ 오류: ' + msg + hint;
   }
 
   if (btn) { btn.disabled = false; btn.textContent = '\ubd84\uc11d \uc2dc\uc791 \u2192'; }
