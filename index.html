@@ -1091,7 +1091,14 @@ function showPage(page) {
       // Show file upload panel for theology coaching skills
       var THEOLOGY_IDS = ['augustine','luther','calvin-inst','calvin-style','bavinck','lloyd-jones','wesley'];
       var fg = document.getElementById('fileUploadGroup');
-      if (fg) fg.style.display = THEOLOGY_IDS.indexOf(currentSkill.id) > -1 ? 'block' : 'none';
+      var iv = document.getElementById('inputVerse');
+      if (THEOLOGY_IDS.indexOf(currentSkill.id) > -1) {
+        if (fg) fg.style.display = 'block';
+        if (iv) iv.placeholder = '설교 제목 또는 성경 본문 (초안 업로드 시 선택)';
+      } else {
+        if (fg) fg.style.display = 'none';
+        if (iv) iv.placeholder = '예: 로마서 8:28, 빌립보서 4:4-7';
+      }
     }
   }
 }
@@ -1171,8 +1178,15 @@ function execSkill(id, name, desc) {
 
 // ═══════ RUN SKILL (direct API streaming) ═══════
 async function runSkill() {
-  const verse = document.getElementById('inputVerse').value.trim();
-  if (!verse) { document.getElementById('inputVerse').focus(); return; }
+  var verse = document.getElementById('inputVerse').value.trim();
+  var draftForCheck = (document.getElementById('sermonDraft') || {}).value || '';
+  var THEOLOGY_IDS_CHECK = ['augustine','luther','calvin-inst','calvin-style','bavinck','lloyd-jones','wesley'];
+  var isTheologyCheck = THEOLOGY_IDS_CHECK.indexOf(currentSkill ? currentSkill.id : '') > -1;
+  // Verse is optional when theology coaching + sermon draft is provided
+  if (!verse && !(isTheologyCheck && draftForCheck.trim())) {
+    document.getElementById('inputVerse').focus();
+    return;
+  }
 
   const provider = localStorage.getItem('sermon_provider') || (document.getElementById('providerSelect') && document.getElementById('providerSelect').value) || 'anthropic';
   const apiKey  = localStorage.getItem('sermon_api_key_' + provider) ||
@@ -1203,12 +1217,77 @@ async function runSkill() {
   // Save verse/extra to session memory
   sessionStorage.setItem('sermon_verse', verse);
   sessionStorage.setItem('sermon_extra', extra);
+
   var draft = (document.getElementById('sermonDraft') || {}).value || '';
-  var userMsg = verse;
-  if (extra) userMsg += '\n\n추가 요청: ' + extra;
-  if (draft.trim()) userMsg += '\n\n[내 설교 초안]\n' + draft.trim();
-  const system  = '\ub2f9\uc2e0\uc740 \ud55c\uad6d \ubaa9\ud68c\uc790\ub97c \uc704\ud55c \uc124\uad50 \uc900\ube44 \uc804\ubb38\uac00\uc785\ub2c8\ub2e4. \uc9c0\uae08 \ub2f4\ub2f9\ud558\ub294 \uc5ed\ud560: [' + currentSkill.name + ']\n' +
-    currentSkill.desc + '\n\n\uc131\uacbd \ubcf8\ubb38\uc744 \uc785\ub825\ubc1b\uc544 \uc6d0\uc5b4(\ud5ec\ub77c\uc5b4/\ud788\ube0c\ub9ac\uc5b4) \ubd84\uc11d, \uc2e0\ud559\uc801 \ud574\uc11d, \uc124\uad50 \uc801\uc6a9\uae4c\uc9c0 \uae4a\uc774 \uc788\uac8c \uc548\ub0b4\ud574 \uc8fc\uc138\uc694. \ud55c\uad6d\uc5b4\ub85c \ub2f5\ubcc0\ud558\uc138\uc694.';
+  var hasDraft = draft.trim().length > 0;
+
+  // Theology coaching skill IDs
+  var THEOLOGY_IDS = ['augustine','luther','calvin-inst','calvin-style','bavinck','lloyd-jones','wesley'];
+  var isTheology = THEOLOGY_IDS.indexOf(currentSkill.id) > -1;
+
+  // Theologian name map for cleaner prompts
+  var THEO_NAME = {
+    'augustine':'어거스틴(354–430)',
+    'luther':'마틴 루터(1483–1546)',
+    'calvin-inst':'존 칼빈(1509–1564)',
+    'calvin-style':'존 칼빈(1509–1564)',
+    'bavinck':'헤르만 바빙크(1854–1921)',
+    'lloyd-jones':'마틴 로이드 존스(1899–1981)',
+    'wesley':'요한 웨슬리(1703–1791)'
+  };
+
+  var system, userMsg;
+
+  if (isTheology && hasDraft) {
+    // ── 신학자 코칭 + 설교 초안 업로드 → 멘토링 모드 ──────────────────
+    var theoName = THEO_NAME[currentSkill.id] || currentSkill.name;
+    var sermonTitle = verse || '첨부된 설교 초안';
+    system =
+      '당신은 ' + theoName + '의 신학과 설교론을 깊이 연구한 전문 코치입니다.\n' +
+      '아래 첨부된 설교 초안을 ' + theoName + '의 신학 원칙·설교론 관점에서 심층 코칭해 주세요.\n\n' +
+      '## 코칭 항목 (각 항목별로 구체적으로 분석해 주세요)\n\n' +
+      '1. **신학적 정확성**: ' + theoName + '의 핵심 신학 개념이 올바르게 반영되었는가?\n' +
+      '2. **본문 해석**: 성경 본문이 ' + theoName + '식으로 충실히 해석되었는가?\n' +
+      '3. **설교 구조**: 서론–본론–결론의 논리적 흐름과 메시지 명확성\n' +
+      '4. **적용**: 회중을 향한 실천적·영적 적용이 구체적인가?\n' +
+      '5. **언어·수사**: 설교 문체와 표현이 효과적인가?\n' +
+      '6. **개선 권고**: ' + theoName + '신학 전통에서 보완하거나 강화할 부분\n\n' +
+      '강점은 인정하되, 개선점은 구체적 대안과 함께 제시해 주세요.\n' +
+      '결론에는 "한 줄 핵심 권고"를 포함해 주세요.\n' +
+      '한국어로 답변하세요.';
+    userMsg = '[설교 제목 / 본문] ' + sermonTitle;
+    if (extra) userMsg += '\n\n[추가 요청] ' + extra;
+    userMsg += '\n\n[설교 초안 전문]\n' + draft.trim();
+
+  } else if (isTheology && !hasDraft) {
+    // ── 신학자 코칭 + 본문/주제만 → 신학적 설교 분석 모드 ────────────
+    var theoName = THEO_NAME[currentSkill.id] || currentSkill.name;
+    system =
+      '당신은 ' + theoName + '의 신학과 설교론을 깊이 연구한 전문 코치입니다.\n' +
+      '아래 성경 본문 또는 설교 주제를 ' + theoName + '의 신학 관점에서 분석하고\n' +
+      '설교 준비에 필요한 신학적 통찰과 구체적인 적용 방향을 제시해 주세요.\n\n' +
+      '다음 순서로 안내해 주세요:\n' +
+      '1. 본문/주제에 대한 ' + theoName + '식 신학적 해석\n' +
+      '2. ' + theoName + '의 핵심 신학 개념 적용\n' +
+      '3. 설교 구조 및 전개 제안\n' +
+      '4. 실천적 적용 아이디어\n' +
+      '5. ' + theoName + '의 관련 저작/설교 인용 제안\n\n' +
+      '한국어로 답변하세요.';
+    userMsg = verse;
+    if (extra) userMsg += '\n\n추가 요청: ' + extra;
+
+  } else {
+    // ── 일반 스킬 → 기존 방식 ────────────────────────────────────────
+    system =
+      '당신은 한국 목회자를 위한 설교 준비 전문가입니다.\n' +
+      '지금 담당하는 역할: [' + currentSkill.name + ']\n' +
+      currentSkill.desc + '\n\n' +
+      '성경 본문을 입력받아 원어(헬라어/히브리어) 분석, 신학적 해석, 설교 적용까지 깊이 있게 안내해 주세요.\n' +
+      '한국어로 답변하세요.';
+    userMsg = verse;
+    if (extra) userMsg += '\n\n추가 요청: ' + extra;
+    if (hasDraft) userMsg += '\n\n[참고 자료]\n' + draft.trim();
+  }
 
   try {
     if (provider === 'anthropic') {
