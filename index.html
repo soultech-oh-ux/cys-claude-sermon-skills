@@ -623,6 +623,10 @@ textarea.input-field { min-height: 110px; resize: vertical; line-height: 1.7; }
 .result-body blockquote { border-left:3px solid var(--gold-400); padding:8px 16px; margin:12px 0; background:rgba(240,192,64,0.04); color:var(--text-tertiary); }
 .result-body hr { border:none; border-top:1px solid var(--border-subtle); margin:16px 0; }
 .export-bar { display:flex; gap:10px; margin-top:18px; padding-top:14px; border-top:1px solid var(--border-subtle); }
+.export-btn.nlm { border-color:rgba(100,180,255,0.4); color:#64b4ff; }
+.export-btn.nlm:hover { background:rgba(100,180,255,0.1); }
+#nlmModal ol { margin:12px 0; padding-left:20px; line-height:2.1; font-size:0.9rem; }
+#nlmModal strong { color:#f0c040; }
 .export-btn {
   padding:8px 18px; border-radius:8px; border:1px solid var(--border-light);
   background:var(--bg-elevated); color:var(--text-secondary);
@@ -902,6 +906,7 @@ textarea.input-field { min-height: 110px; resize: vertical; line-height: 1.7; }
                 <button class="export-btn" onclick="exportDocx()">📝 Word</button>
                 <button class="export-btn drive" id="btnDrive" onclick="exportToDrive()" style="display:none;">☁️ Drive</button>
                 <button class="export-btn" onclick="copyText()">📋 복사</button>
+                <button class="export-btn nlm" onclick="exportToNotebookLM()">📓 NotebookLM</button>
               </div>
             </div>
           </div>
@@ -1402,14 +1407,26 @@ async function runSkill() {
   } catch(e) {
     var msg = e.message || '';
     var hint = '';
+    var isOverload = false;
     if (msg.includes('invalid x-api-key') || msg.includes('invalid_api_key')) {
       hint = '\n\n개선 안내: API Key가 잘못되었습니다. 사이드바 하단 [API 설정]에서 제공사를 확인하고 키를 다시 저장해 주세요.';
     } else if (msg.includes('401') || msg.includes('403') || msg.includes('Unauthorized')) {
       hint = '\n\n개선 안내: 인증 실패입니다. API Key를 다시 확인해 주세요.';
     } else if (msg.includes('CORS') || msg.includes('Failed to fetch')) {
       hint = '\n\n개선 안내: 브라우저 CORS 제한입니다. 로컈 서버를 통해 실행하거나 확장을 사용해 주세요.';
+    } else if (msg.includes('529') || msg.includes('503') || msg.includes('overloaded') || msg.includes('high demand') || msg.includes('temporarily') || msg.includes('Overloaded')) {
+      hint = '\n\n⏳ 서버 과부하: API 서버가 현재 일시적으로 과부하 상태입니다. 1~2분 후 다시 시도해 주세요.';
+      isOverload = true;
     }
     resultBody.textContent += '\n\n❌ 오류: ' + msg + hint;
+    if (isOverload) {
+      var retryBtn = document.createElement('button');
+      retryBtn.textContent = '🔄 다시 시도';
+      retryBtn.className = 'action-btn';
+      retryBtn.style.cssText = 'margin-top:12px;display:block;';
+      retryBtn.onclick = function() { retryBtn.remove(); runSkill(); };
+      resultBody.appendChild(retryBtn);
+    }
     document.getElementById('apiStatus').textContent = 'Error';
     document.getElementById('apiStatus').className = 'api-status disconnected';
   }
@@ -2512,6 +2529,51 @@ function updateSidebarApiStatus(ok) {
     }, 500);
   })();
 
+
+  // ── NotebookLM export ───────────────────────────────────────────────────
+  async function exportToNotebookLM() {
+    var title = (document.getElementById('resultTitle')||{}).textContent || '설교 분석 결과';
+    var body  = document.getElementById('resultBody');
+    if (!body || !body.textContent.trim()) { alert('내보낼 분석 결과가 없습니다.'); return; }
+
+    var text = '[' + title + ']\n\n' + (body.innerText || body.textContent).trim();
+
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch(e) {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+
+    window.open('https://notebooklm.google.com', '_blank');
+    showNlmGuide();
+  }
+
+  function showNlmGuide() {
+    var old = document.getElementById('nlmModal');
+    if (old) old.remove();
+    var m = document.createElement('div');
+    m.id = 'nlmModal';
+    m.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.65);z-index:9999;display:flex;align-items:center;justify-content:center;';
+    m.innerHTML = '<div style="background:#1a1a2e;border:1px solid rgba(100,180,255,0.35);border-radius:16px;padding:32px 36px;max-width:480px;width:92%;color:#ddd8c8;">'
+      + '<h3 style="color:#64b4ff;margin:0 0 10px;font-size:1.05rem;">\uD83D\uDCD3 NotebookLM \uC18C\uC2A4 \uCD94\uAC00 \uBC29\uBC95</h3>'
+      + '<p style="margin:0 0 14px;color:#a89880;font-size:0.84rem;">\uBD84\uC11D \uACB0\uACFC\uAC00 <strong style=\"color:#f0c040;\">\uD074\uB9BD\uBCF4\uB4DC\uC5D0 \uBCF5\uC0AC</strong>\uB418\uC5C8\uC2B5\uB2C8\uB2E4.</p>'
+      + '<ol style="margin:0 0 18px;padding-left:22px;line-height:2.2;font-size:0.91rem;">'
+      + '<li>\uC0C8\uB85C \uC5F4\uB9B0 <strong>NotebookLM</strong> \uD0ED \uD655\uC778</li>'
+      + '<li><strong>\uC0C8 \uB178\uD2B8\uBD81 \uB9CC\uB4E4\uAE30</strong> \uD074\uB9AD</li>'
+      + '<li><strong>\uC18C\uC2A4 \uCD94\uAC00</strong> \u2192 <strong>\uD14D\uC2A4\uD2B8 \uBCF5\uC0AC\uBCF8</strong> \uC120\uD0DD</li>'
+      + '<li>\uC785\uB825\uCC3D\uC5D0 <strong>Ctrl+V</strong> (Mac: Cmd+V) \uB85C \uBD99\uC5EC\uB123\uAE30</li>'
+      + '<li><strong>\uC0BD\uC785</strong> \uBC84\uD2BC \uD074\uB9AD &mdash; \uC644\uB8CC!</li>'
+      + '</ol>'
+      + '<button onclick="document.getElementById(\'nlmModal\').remove()" style="padding:11px 0;background:#64b4ff;color:#0d0d1e;border:none;border-radius:9px;font-weight:700;cursor:pointer;width:100%;font-size:0.95rem;">\uD655\uC778</button>'
+      + '</div>';
+    document.body.appendChild(m);
+    m.addEventListener('click', function(e){ if(e.target===m) m.remove(); });
+  }
 </script>
 </body>
 </html>
