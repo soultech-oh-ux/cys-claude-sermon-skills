@@ -1143,13 +1143,22 @@ function showPage(page) {
       clearActiveSkill();
       const item = document.querySelector(`.skill-item[data-skill-id="${currentSkill.id}"]`);
       if (item) item.classList.add('active-skill');
-      // Show file upload panel for theology coaching skills
-      var THEOLOGY_IDS = ['augustine','luther','calvin-inst','calvin-style','bavinck','lloyd-jones','wesley'];
+      // Show file upload panel for theology coaching + emotive writing
+      var UPLOAD_SKILL_IDS = ['augustine','luther','calvin-inst','calvin-style','bavinck','lloyd-jones','wesley','emotive'];
       var fg = document.getElementById('fileUploadGroup');
       var iv = document.getElementById('inputVerse');
-      if (THEOLOGY_IDS.indexOf(currentSkill.id) > -1) {
+      var badge = document.querySelector('#fileUploadGroup .mentor-badge');
+      if (UPLOAD_SKILL_IDS.indexOf(currentSkill.id) > -1) {
         if (fg) fg.style.display = 'block';
-        if (iv) iv.placeholder = '설교 제목 또는 성경 본문 (초안 업로드 시 선택)';
+        if (iv) iv.placeholder = '설교 제목 또는 성경 본문 (파일 업로드 시 선택)';
+        if (badge) badge.textContent = currentSkill.id === 'emotive' ? '글쓰기 코치' : '멘토링';
+        // Update placeholder text inside drop area
+        var dropText = document.querySelector('#fileUploadGroup .file-drop-text');
+        if (dropText) dropText.textContent = '클릭하여 파일 선택';
+        var draftEl = document.getElementById('sermonDraft');
+        if (draftEl) draftEl.placeholder = currentSkill.id === 'emotive'
+          ? '설교문을 여기에 붙여넣거나 위에서 파일을 업로드하세요 — 수사법 코칭이 진행됩니다…'
+          : '설교 초안을 여기에 붙여넣거나 위에서 파일을 업로드하세요…';
       } else {
         if (fg) fg.style.display = 'none';
         if (iv) iv.placeholder = '예: 로마서 8:28, 빌립보서 4:4-7';
@@ -1278,6 +1287,7 @@ async function runSkill() {
 
   // Theology coaching skill IDs
   var THEOLOGY_IDS = ['augustine','luther','calvin-inst','calvin-style','bavinck','lloyd-jones','wesley'];
+  var isEmotive = currentSkill.id === 'emotive';
   var isTheology = THEOLOGY_IDS.indexOf(currentSkill.id) > -1;
 
   // Theologian name map for cleaner prompts
@@ -1293,7 +1303,39 @@ async function runSkill() {
 
   var system, userMsg;
 
-  if (isTheology && hasDraft) {
+  if (isEmotive && hasDraft) {
+    // ── 감동 글쓰기 코치 + 설교문 업로드 → 수사법 코칭 모드 ──────────────────
+    var sermonTitle = verse || '첨부된 설교문';
+    system =
+      '당신은 설교 글쓰기 전문 코치입니다. 수사학·문체론 전문가로서 아래 설교문을 분석하고 코칭해 주세요.\n\n'
+      + '## 코칭 항목\n\n'
+      + '1. **수사법 분석**: 사용된 수사적 기법(은유·직유·반복·대조·점층·열거·설의법·과장법 등) 식별 및 평가\n'
+      + '2. **감동 유발 요소**: 감정적 호소력, 청중 공감 포인트 분석\n'
+      + '3. **문장 리듬과 호흡**: 문장 길이·리듬감·구술 적합성 평가\n'
+      + '4. **표현 강화 제안**: 더 강력하고 생생한 표현으로 개선할 부분 구체적 제시\n'
+      + '5. **구조적 흐름**: 서론·본론·결론의 감동적 전개와 클라이맥스 분석\n'
+      + '6. **수정 예시**: 개선이 필요한 핵심 단락 2~3곳을 직접 수정하여 원문과 비교 제시\n\n'
+      + '구체적 문장·단락을 인용하며 코칭해 주세요. 한국어로 답변하세요.';
+    userMsg = '[설교 제목] ' + sermonTitle;
+    if (extra) userMsg += '\n\n[추가 요청] ' + extra;
+    userMsg += '\n\n[설교문 전문]\n' + draft.trim();
+
+  } else if (isEmotive && !hasDraft) {
+    // ── 감동 글쓰기 코치 + 본문/주제만 → 글쓰기 가이드 모드 ──────────────
+    system =
+      '당신은 설교 글쓰기 전문 코치입니다. 아래 성경 본문 또는 설교 주제로\n'
+      + '감동적인 설교문을 작성하는 데 필요한 수사법·문체·표현 전략을 안내해 주세요.\n\n'
+      + '다음 순서로 안내해 주세요:\n'
+      + '1. 이 본문/주제에 적합한 핵심 수사법 3가지 추천 및 예시\n'
+      + '2. 감동적인 서론 작성 전략 (도입 예화 또는 질문 예시 포함)\n'
+      + '3. 본론 전개의 감정적 클라이맥스 설계\n'
+      + '4. 결론·초청의 감동적 표현 예시\n'
+      + '5. 실제 설교 문장 샘플 3~5개\n\n'
+      + '한국어로 답변하세요.';
+    userMsg = verse;
+    if (extra) userMsg += '\n\n추가 요청: ' + extra;
+
+  } else if (isTheology && hasDraft) {
     // ── 신학자 코칭 + 설교 초안 업로드 → 멘토링 모드 ──────────────────
     var theoName = THEO_NAME[currentSkill.id] || currentSkill.name;
     var sermonTitle = verse || '첨부된 설교 초안';
