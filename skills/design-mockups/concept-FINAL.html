@@ -2393,6 +2393,9 @@ function updateSidebarApiStatus(ok) {
 
     var text = '[' + title + ']\n\n' + (body.innerText || body.textContent).trim();
 
+    // window.open before await to preserve user gesture context
+    window.open('https://notebooklm.google.com', '_blank');
+
     try {
       await navigator.clipboard.writeText(text);
     } catch(e) {
@@ -2404,7 +2407,6 @@ function updateSidebarApiStatus(ok) {
       document.body.removeChild(ta);
     }
 
-    window.open('https://notebooklm.google.com', '_blank');
     showNlmGuide();
   }
 
