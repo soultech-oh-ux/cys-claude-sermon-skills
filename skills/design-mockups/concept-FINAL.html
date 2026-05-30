@@ -622,6 +622,7 @@ textarea.input-field { min-height: 110px; resize: vertical; line-height: 1.7; }
   <!-- PDF.js & mammoth.js for file upload -->
   <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3/dist/jszip.min.js"></script>
 </head>
 <body>
 
@@ -823,8 +824,10 @@ textarea.input-field { min-height: 110px; resize: vertical; line-height: 1.7; }
               <h4 id="resultTitle">분석 결과</h4>
               <div class="result-body" id="resultBody"></div>
               <div class="export-bar" id="exportBar" style="display:none;">
-                <button class="export-btn primary" onclick="exportHtml()">💾 HTML로 저장</button>
-                <button class="export-btn" onclick="copyText()">📋 텍스트 복사</button>
+                <button class="export-btn primary" onclick="exportHtml()">💾 HTML</button>
+                <button class="export-btn" onclick="exportDocx()">📝 Word</button>
+                <button class="export-btn" onclick="exportHwpx()">📄 HWPX</button>
+                <button class="export-btn" onclick="copyText()">📋 복사</button>
               </div>
             </div>
           </div>
@@ -1777,6 +1780,324 @@ function updateSidebarApiStatus(ok) {
     var fi = document.getElementById('fileInput'); if (fi) fi.value = '';
     var sd = document.getElementById('sermonDraft'); if (sd) sd.value = '';
     var fb = document.getElementById('fileNameBar'); if (fb) fb.style.display = 'none';
+  }
+
+
+  /* ── DOCX / HWPX Export ── */
+
+  function escXml(s) {
+    return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&apos;');
+  }
+
+  function domToDocxBody(titleText, bodyEl) {
+    var xml = '';
+
+    function pStyle(style, text) {
+      return '<w:p><w:pPr><w:pStyle w:val="'+style+'"/></w:pPr>'
+           + '<w:r><w:t xml:space="preserve">'+escXml(text)+'</w:t></w:r></w:p>';
+    }
+    function pNormal(runs) { return '<w:p>'+runs+'</w:p>'; }
+    function run(text, bold, italic) {
+      var rPr = (bold||italic) ? '<w:rPr>'+(bold?'<w:b/>':'')+(italic?'<w:i/>':'')+'</w:rPr>' : '';
+      return '<w:r>'+rPr+'<w:t xml:space="preserve">'+escXml(text)+'</w:t></w:r>';
+    }
+    function inlineRuns(el) {
+      var out = '';
+      el.childNodes.forEach(function(n) {
+        if (n.nodeType === 3) { out += run(n.textContent, false, false); }
+        else if (n.nodeName==='STRONG'||n.nodeName==='B') { out += run(n.textContent, true, false); }
+        else if (n.nodeName==='EM'||n.nodeName==='I') { out += run(n.textContent, false, true); }
+        else if (n.nodeName==='CODE') { out += run(n.textContent, false, false); }
+        else { out += run(n.textContent, false, false); }
+      });
+      return out;
+    }
+    function tableToDocx(tbl) {
+      var out = '<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="pct"/><w:tblBorders>'
+              + '<w:top w:val="single" w:sz="4" w:color="AAAAAA"/>'
+              + '<w:left w:val="single" w:sz="4" w:color="AAAAAA"/>'
+              + '<w:bottom w:val="single" w:sz="4" w:color="AAAAAA"/>'
+              + '<w:right w:val="single" w:sz="4" w:color="AAAAAA"/>'
+              + '<w:insideH w:val="single" w:sz="4" w:color="CCCCCC"/>'
+              + '<w:insideV w:val="single" w:sz="4" w:color="CCCCCC"/>'
+              + '</w:tblBorders></w:tblPr>';
+      tbl.querySelectorAll('tr').forEach(function(tr, ri) {
+        out += '<w:tr>';
+        tr.querySelectorAll('th,td').forEach(function(td) {
+          var isHead = td.nodeName === 'TH';
+          out += '<w:tc><w:tcPr>';
+          if (isHead) out += '<w:shd w:val="clear" w:color="auto" w:fill="F0F0F0"/>';
+          out += '</w:tcPr>';
+          out += '<w:p>';
+          if (isHead) out += '<w:pPr><w:jc w:val="center"/></w:pPr>';
+          out += '<w:r>';
+          if (isHead) out += '<w:rPr><w:b/></w:rPr>';
+          out += '<w:t xml:space="preserve">'+escXml(td.textContent)+'</w:t></w:r></w:p></w:tc>';
+        });
+        out += '</w:tr>';
+      });
+      return out + '</w:tbl>';
+    }
+
+    // Title
+    xml += pStyle('Heading1', titleText);
+
+    bodyEl.childNodes.forEach(function(node) {
+      var tag = node.nodeName;
+      if (tag==='H1') xml += pStyle('Heading1', node.textContent);
+      else if (tag==='H2') xml += pStyle('Heading2', node.textContent);
+      else if (tag==='H3') xml += pStyle('Heading3', node.textContent);
+      else if (tag==='H4') xml += pStyle('Heading4', node.textContent);
+      else if (tag==='P') xml += pNormal(inlineRuns(node));
+      else if (tag==='UL') node.querySelectorAll('li').forEach(function(li) {
+        xml += pStyle('ListBullet', '\u2022 '+li.textContent);
+      });
+      else if (tag==='OL') { var i=1; node.querySelectorAll('li').forEach(function(li) {
+        xml += pStyle('ListNumber', (i++)+'. '+li.textContent);
+      }); }
+      else if (tag==='BLOCKQUOTE') xml += pStyle('Quote', node.textContent);
+      else if (tag==='TABLE') xml += tableToDocx(node);
+      else if (tag==='PRE') node.textContent.split('\n').forEach(function(l) {
+        xml += pStyle('Normal', l||' ');
+      });
+      else if (tag==='HR') xml += '<w:p><w:pPr><w:pBdr><w:bottom w:val="single" w:sz="4" w:space="1" w:color="AAAAAA"/></w:pBdr></w:pPr></w:p>';
+    });
+    return xml;
+  }
+
+  async function loadJSZip() {
+    if (typeof JSZip !== 'undefined') return JSZip;
+    return new Promise(function(resolve, reject) {
+      var s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/jszip@3/dist/jszip.min.js';
+      s.onload = function() { resolve(window.JSZip); };
+      s.onerror = function() { reject(new Error('JSZip CDN 로드 실패. 인터넷 연결을 확인해 주세요.')); };
+      document.head.appendChild(s);
+    });
+  }
+
+  async function exportDocx() {
+    var title = (document.getElementById('resultTitle')||{}).textContent || '설교 분석 결과';
+    var body  = document.getElementById('resultBody');
+    if (!body || !body.textContent.trim()) { alert('내보낼 분석 결과가 없습니다.'); return; }
+
+    var JZ;
+    try { JZ = await loadJSZip(); } catch(e) { alert(e.message); return; }
+
+    var bodyXml = domToDocxBody(title, body);
+    var zip = new JZ();
+
+    zip.file('[Content_Types].xml',
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      +'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+      +'<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+      +'<Default Extension="xml" ContentType="application/xml"/>'
+      +'<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+      +'<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>'
+      +'<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>'
+      +'</Types>');
+
+    zip.file('_rels/.rels',
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      +'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+      +'<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
+      +'<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>'
+      +'</Relationships>');
+
+    zip.file('word/_rels/document.xml.rels',
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      +'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+      +'<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
+      +'</Relationships>');
+
+    zip.file('word/document.xml',
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      +'<w:document xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas"'
+      +' xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+      +' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+      +'<w:body>'+bodyXml
+      +'<w:sectPr><w:pgSz w:w="12240" w:h="15840"/>'
+      +'<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1800" w:header="720" w:footer="720" w:gutter="0"/>'
+      +'</w:sectPr></w:body></w:document>');
+
+    zip.file('word/styles.xml',
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      +'<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml">'
+      // Normal
+      +'<w:style w:type="paragraph" w:styleId="Normal" w:default="1"><w:name w:val="Normal"/>'
+      +'<w:pPr><w:spacing w:line="360" w:lineRule="auto"/></w:pPr>'
+      +'<w:rPr><w:rFonts w:eastAsia="맑은 고딕" w:ascii="Calibri"/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:style>'
+      // Heading1
+      +'<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/>'
+      +'<w:pPr><w:spacing w:before="240" w:after="120"/><w:pBdr><w:bottom w:val="single" w:sz="4" w:space="1" w:color="C8961E"/></w:pBdr></w:pPr>'
+      +'<w:rPr><w:rFonts w:eastAsia="맑은 고딕" w:ascii="Calibri"/><w:b/><w:sz w:val="32"/><w:szCs w:val="32"/><w:color w:val="1A1A2E"/></w:rPr></w:style>'
+      // Heading2
+      +'<w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/>'
+      +'<w:pPr><w:spacing w:before="200" w:after="80"/></w:pPr>'
+      +'<w:rPr><w:rFonts w:eastAsia="맑은 고딕" w:ascii="Calibri"/><w:b/><w:sz w:val="26"/><w:szCs w:val="26"/><w:color w:val="1A1A2E"/></w:rPr></w:style>'
+      // Heading3
+      +'<w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/>'
+      +'<w:pPr><w:spacing w:before="160" w:after="60"/></w:pPr>'
+      +'<w:rPr><w:rFonts w:eastAsia="맑은 고딕" w:ascii="Calibri"/><w:b/><w:sz w:val="24"/><w:szCs w:val="24"/><w:color w:val="C8961E"/></w:rPr></w:style>'
+      // Heading4
+      +'<w:style w:type="paragraph" w:styleId="Heading4"><w:name w:val="heading 4"/>'
+      +'<w:rPr><w:rFonts w:eastAsia="맑은 고딕" w:ascii="Calibri"/><w:b/><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:style>'
+      // ListBullet / ListNumber
+      +'<w:style w:type="paragraph" w:styleId="ListBullet"><w:name w:val="List Bullet"/>'
+      +'<w:pPr><w:ind w:left="480" w:hanging="240"/></w:pPr>'
+      +'<w:rPr><w:rFonts w:eastAsia="맑은 고딕" w:ascii="Calibri"/><w:sz w:val="22"/></w:rPr></w:style>'
+      +'<w:style w:type="paragraph" w:styleId="ListNumber"><w:name w:val="List Number"/>'
+      +'<w:pPr><w:ind w:left="480" w:hanging="240"/></w:pPr>'
+      +'<w:rPr><w:rFonts w:eastAsia="맑은 고딕" w:ascii="Calibri"/><w:sz w:val="22"/></w:rPr></w:style>'
+      // Quote
+      +'<w:style w:type="paragraph" w:styleId="Quote"><w:name w:val="Quote"/>'
+      +'<w:pPr><w:ind w:left="720"/><w:pBdr><w:left w:val="single" w:sz="12" w:space="4" w:color="C8961E"/></w:pBdr></w:pPr>'
+      +'<w:rPr><w:rFonts w:eastAsia="맑은 고딕" w:ascii="Calibri"/><w:i/><w:color w:val="555555"/><w:sz w:val="22"/></w:rPr></w:style>'
+      +'</w:styles>');
+
+    zip.file('docProps/core.xml',
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      +'<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties"'
+      +' xmlns:dc="http://purl.org/dc/elements/1.1/">'
+      +'<dc:title>'+escXml(title)+'</dc:title>'
+      +'<dc:creator>CYS Sermon Skills</dc:creator>'
+      +'</cp:coreProperties>');
+
+    var blob = await zip.generateAsync({
+      type:'blob',
+      mimeType:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      compression:'DEFLATE'
+    });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = title.replace(/[\\/:*?"<>|]/g,'_')+'.docx';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  }
+
+  async function exportHwpx() {
+    var title = (document.getElementById('resultTitle')||{}).textContent || '설교 분석 결과';
+    var body  = document.getElementById('resultBody');
+    if (!body || !body.textContent.trim()) { alert('내보낼 분석 결과가 없습니다.'); return; }
+
+    var JZ;
+    try { JZ = await loadJSZip(); } catch(e) { alert(e.message); return; }
+
+    // Build HML paragraphs from DOM
+    var paraId = 0;
+    function hmlPara(text, charSize, bold, indent) {
+      charSize = charSize || 1000;  // 1000 = 10pt in HWP units (1/100 pt)
+      var id = paraId++;
+      var charShapeXml = '<CHARSHAPE baseID="0"/>';
+      var boldXml = bold ? '<BOLD/>' : '';
+      return '<PARA id="'+id+'" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">'
+           + '<MARGIN left="'+(indent||0)+'" right="0" prev="0" next="0" indent="0"/>'
+           + '<TEXT>'
+           + '<CHARSHAPE baseID="0"'+( charSize!==1000||bold ? ' height="'+charSize+'"' : '')+'>'
+           + boldXml + '</CHARSHAPE>'
+           + '<STRING>'+escXml(text)+'</STRING>'
+           + '</TEXT>'
+           + '</PARA>';
+    }
+
+    var paras = '';
+    body.childNodes.forEach(function(node) {
+      var tag = node.nodeName;
+      var text = (node.textContent||'').trim();
+      if (!text && tag !== 'HR') return;
+      if (tag==='H1') paras += hmlPara(text, 1600, true, 0);
+      else if (tag==='H2') paras += hmlPara(text, 1300, true, 0);
+      else if (tag==='H3') paras += hmlPara(text, 1100, true, 0);
+      else if (tag==='H4') paras += hmlPara(text, 1000, true, 0);
+      else if (tag==='P') paras += hmlPara(text, 1000, false, 0);
+      else if (tag==='UL') node.querySelectorAll('li').forEach(function(li) {
+        paras += hmlPara('\u2022 '+(li.textContent||'').trim(), 1000, false, 280);
+      });
+      else if (tag==='OL') { var i=1; node.querySelectorAll('li').forEach(function(li) {
+        paras += hmlPara((i++)+'. '+(li.textContent||'').trim(), 1000, false, 280);
+      }); }
+      else if (tag==='BLOCKQUOTE') paras += hmlPara(text, 950, false, 560);
+      else if (tag==='TABLE') {
+        node.querySelectorAll('tr').forEach(function(tr) {
+          var cells = Array.from(tr.querySelectorAll('th,td')).map(function(c){return (c.textContent||'').trim();});
+          paras += hmlPara(cells.join('  |  '), 1000, tr.querySelector('th') ? true : false, 0);
+        });
+      }
+      else if (tag==='PRE') text.split('\n').forEach(function(l){ paras += hmlPara(l||' ', 900, false, 0); });
+      else if (tag==='HR') paras += hmlPara('────────────────────────────────────', 800, false, 0);
+    });
+
+    var hml =
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+      +'<hml xmlns="http://www.hancom.co.kr/hwpml/2011/paragraph" '
+      +'xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph" version="1.3.0.0">\n'
+      +'<HEAD>\n'
+      +'  <DOCSETTING><BEGINNUMBER pagenum="1" footnotenum="1" endnotenum="1" picnum="1" tblnum="1" equnum="1"/>'
+      +'<CARETPOS para="0" pos="0"/></DOCSETTING>\n'
+      +'  <FORBIDDENCHARS/>\n'
+      +'  <CHARSHAPELIST>\n'
+      +'    <CHARSHAPE id="0" height="1000" textColor="0" shadeColor="4294967295" useFontSpace="0" useKerning="0" symMark="0" borderFillIDRef="0">\n'
+      +'      <FONTID hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/>\n'
+      +'      <RATIO hangul="100" latin="100" hanja="100" japanese="100" other="100" symbol="100" user="100"/>\n'
+      +'      <SPACING hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/>\n'
+      +'      <RELSIZE hangul="100" latin="100" hanja="100" japanese="100" other="100" symbol="100" user="100"/>\n'
+      +'      <OFFSET hangul="0" latin="0" hanja="0" japanese="0" other="0" symbol="0" user="0"/>\n'
+      +'    </CHARSHAPE>\n'
+      +'  </CHARSHAPELIST>\n'
+      +'  <PARASHAPELIST>\n'
+      +'    <PARASHAPE id="0" align="BOTH" lineSpacingType="PercentLinespace" lineSpacing="160" '
+      +'paraBorderConnect="0" paraBorderOffsetLengthMode="0" vertAlign="VERTICAL_ALIGN_TOP">\n'
+      +'      <PARAMARGIN left="0" right="0" prev="0" next="0" indent="0"/>\n'
+      +'      <PARAOUTLINE level="0"/>\n'
+      +'      <PARABORDER fillIDRef="0" borderFillIDRef="0"/>\n'
+      +'    </PARASHAPE>\n'
+      +'  </PARASHAPELIST>\n'
+      +'  <STYLELIST>\n'
+      +'    <STYLE id="0" type="para" name="\ubc14\ud0d5\uae00" engname="Normal" parashape="0" charshape="0" lockform="0" nextStyle="0"/>\n'
+      +'  </STYLELIST>\n'
+      +'  <FACENAMELIST>\n'
+      +'    <FACENAME id="0" name="\ud568\ucd08\ub86c\ubc14\ud0d5" type="ttf" isEmbedded="0" subfamilyname="">\n'
+      +'      <PANOSE value="02020600000000000000"/>\n'
+      +'      <FALLBACK name="\ubc14\ud0d5"/>\n'
+      +'    </FACENAME>\n'
+      +'  </FACENAMELIST>\n'
+      +'  <BORDERFILLLIST>\n'
+      +'    <BORDERFILL id="0" threeD="0" shadow="0" centerLine="0" breakCellSeparateLine="0">\n'
+      +'      <LEFTBORDER type="NONE" width="0.1mm" color="0"/>\n'
+      +'      <RIGHTBORDER type="NONE" width="0.1mm" color="0"/>\n'
+      +'      <TOPBORDER type="NONE" width="0.1mm" color="0"/>\n'
+      +'      <BOTTOMBORDER type="NONE" width="0.1mm" color="0"/>\n'
+      +'      <DIAGONAL type="NONE" width="0.1mm" color="0"/>\n'
+      +'      <FILLINFO><NONFILL/></FILLINFO>\n'
+      +'    </BORDERFILL>\n'
+      +'  </BORDERFILLLIST>\n'
+      +'  <METAINFO readonly="0" distributable="0" privateInfoProtected="0" editPassword="" distributionPassword="">\n'
+      +'    <TITLE>'+escXml(title)+'</TITLE>\n'
+      +'  </METAINFO>\n'
+      +'</HEAD>\n'
+      +'<BODY>\n'
+      +'  <SECTION tabstop="709" outline="None" page="Page_0" colbreak="0" hide="0">\n'
+      + paras
+      +'  </SECTION>\n'
+      +'</BODY>\n'
+      +'</hml>';
+
+    var zip = new JZ();
+    // mimetype must be STORED (not compressed) and be the first file
+    zip.file('mimetype', 'application/hwp+zip', {compression:'STORE'});
+    zip.file('META-INF/container.xml',
+      '<?xml version="1.0" encoding="UTF-8"?>\n'
+      +'<container>\n'
+      +'  <rootfiles>\n'
+      +'    <rootfile full-path="Contents/content.hml" media-type="application/vnd.hancom.hml"/>\n'
+      +'  </rootfiles>\n'
+      +'</container>');
+    zip.file('Contents/content.hml', hml);
+
+    var blob = await zip.generateAsync({type:'blob', mimeType:'application/hwp+zip', compression:'DEFLATE'});
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = title.replace(/[\\/:*?"<>|]/g,'_')+'.hwpx';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
   }
 
 </script>
